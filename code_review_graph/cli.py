@@ -212,7 +212,7 @@ def main() -> None:
     init_cmd.add_argument("--skills", action="store_true", help=argparse.SUPPRESS)
     init_cmd.add_argument("--hooks", action="store_true", help=argparse.SUPPRESS)
     init_cmd.add_argument("--all", action="store_true", dest="install_all",
-                             help=argparse.SUPPRESS)
+                            help=argparse.SUPPRESS)
     init_cmd.add_argument(
         "--platform",
         choices=[

@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "tree-sitter-sfapex": "^2.4.1"
+  }
+}

@@ -17,7 +17,13 @@ from typing import NamedTuple, Optional
 import tree_sitter_language_pack as tslp
 
 from .tsconfig_resolver import TsconfigResolver
+from tree_sitter import Language, Parser
+import tree_sitter_language_pack as tslp
 
+APEX_LANGUAGE = Language(
+    "/Users/hardikchhallani/Desktop/code-review-graph/build/my-languages.so",
+    "apex"
+)
 
 class CellInfo(NamedTuple):
     """Represents a single cell in a notebook with its language."""
@@ -102,6 +108,8 @@ EXTENSION_TO_LANGUAGE: dict[str, str] = {
     ".xs": "c",  # Perl XS: parsed as C to capture functions/structs/includes
     ".lua": "lua",
     ".ipynb": "notebook",
+    ".cls": "apex",
+    ".trigger": "apex",
 }
 
 # Tree-sitter node type mappings per language
@@ -136,6 +144,7 @@ _CLASS_TYPES: dict[str, list[str]] = {
     ],
     "dart": ["class_definition", "mixin_declaration", "enum_declaration"],
     "lua": [],  # Lua has no class keyword; table-based OOP handled via constructs handler
+    "apex": ["class_declaration", "interface_declaration", "enum_declaration"],
 }
 
 _FUNCTION_TYPES: dict[str, list[str]] = {
@@ -170,6 +179,7 @@ _FUNCTION_TYPES: dict[str, list[str]] = {
     # function_signature inside it).
     "dart": ["function_signature"],
     "lua": ["function_declaration"],
+    "apex": ["method_declaration","constructor_declaration"],
 }
 
 _IMPORT_TYPES: dict[str, list[str]] = {
@@ -195,6 +205,7 @@ _IMPORT_TYPES: dict[str, list[str]] = {
     "dart": ["import_or_export"],
     # Lua: require() is a function_call, handled via _extract_lua_constructs
     "lua": [],
+    "apex" : []
 }
 
 _CALL_TYPES: dict[str, list[str]] = {
@@ -220,6 +231,7 @@ _CALL_TYPES: dict[str, list[str]] = {
     "scala": ["call_expression", "instance_expression", "generic_function"],
     "solidity": ["call_expression"],
     "lua": ["function_call"],
+    "apex": ["method_invocation"],
 }
 
 # Patterns that indicate a test function
@@ -286,12 +298,15 @@ class CodeParser:
         self._module_file_cache: dict[str, Optional[str]] = {}
         self._tsconfig_resolver = TsconfigResolver()
 
-    def _get_parser(self, language: str):  # type: ignore[arg-type]
+    def _get_parser(self, language: str):
         if language not in self._parsers:
-            try:
-                self._parsers[language] = tslp.get_parser(language)  # type: ignore[arg-type]
-            except Exception:
-                return None
+            if language == "apex":
+                parser = Parser()
+                parser.set_language(APEX_LANGUAGE)
+                self._parsers[language] = parser
+            else:
+                self._parsers[language] = tslp.get_parser(language)
+
         return self._parsers[language]
 
     def detect_language(self, path: Path) -> Optional[str]:
@@ -905,6 +920,14 @@ class CodeParser:
             ):
                 continue
 
+            # --- Apex-specific constructs ---
+            if language == "apex" and self._extract_apex_constructs(
+                child, node_type, source, language, file_path,
+                nodes, edges, enclosing_class, enclosing_func,
+                import_map, defined_names, _depth,
+            ):
+                continue
+
             # --- JS/TS variable-assigned functions (const foo = () => {}) ---
             if (
                 language in ("javascript", "typescript", "tsx")
@@ -1267,6 +1290,44 @@ class CodeParser:
             _depth=_depth + 1,
         )
         return True
+    
+    def _extract_apex_constructs(
+        self,
+        child,
+        node_type,
+        source,
+        language,
+        file_path,
+        nodes,
+        edges,
+        enclosing_class,
+        enclosing_func,
+        import_map,
+        defined_names,
+        _depth,
+    ) -> bool:
+        if node_type == "trigger_declaration":
+            trigger_name = self._get_name(child, language, "class")
+
+            nodes.append(NodeInfo(
+                kind="Class",
+                name=trigger_name,
+                file_path=file_path,
+                line_start=child.start_point[0] + 1,
+                line_end=child.end_point[0] + 1,
+                language=language,
+            ))
+
+            self._extract_from_tree(
+                child, source, language, file_path, nodes, edges,
+                enclosing_class=trigger_name,
+                enclosing_func=enclosing_func,
+                import_map=import_map,
+                defined_names=defined_names,
+                _depth=_depth + 1,
+            )
+            return True
+        return False
 
     @staticmethod
     def _lua_get_require_target(call_node) -> Optional[str]:
