@@ -1,6 +1,6 @@
 # Documentation Index
 
-- [USAGE.md](USAGE.md) -- How to install and use
+- [USAGE.md](USAGE.md) -- How to install and use for salesforce.
 - [FEATURES.md](FEATURES.md) -- What's included, changelog
 - [COMMANDS.md](COMMANDS.md) -- All 22 MCP tools, 5 MCP prompts, skills, and CLI commands
 - [LLM-OPTIMIZED-REFERENCE.md](LLM-OPTIMIZED-REFERENCE.md) -- Token-optimized reference (Claude Code reads this)
