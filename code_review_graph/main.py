@@ -6,7 +6,7 @@ Communicates via stdio (standard MCP transport).
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from fastmcp import FastMCP
 
@@ -17,6 +17,7 @@ from .prompts import (
     pre_merge_check_prompt,
     review_changes_prompt,
 )
+from .token_usage import get_token_usage_summary, track_tool_usage
 from .tools import (
     apply_refactor_func,
     build_or_update_graph,
@@ -56,6 +57,25 @@ mcp = FastMCP(
 )
 
 
+def _execute_tool(
+    tool_name: str,
+    fn: Callable[..., dict],
+    *,
+    tool_args: dict[str, Any],
+    repo_root: str | None = None,
+) -> dict:
+    """Execute a tool function and record local token usage."""
+    result = fn(**tool_args)
+    track_tool_usage(
+        tool_name=tool_name,
+        tool_args=tool_args,
+        result=result,
+        repo_root=repo_root,
+        default_repo_root=_default_repo_root,
+    )
+    return result
+
+
 @mcp.tool()
 def build_or_update_graph_tool(
     full_rebuild: bool = False,
@@ -73,8 +93,15 @@ def build_or_update_graph_tool(
         repo_root: Repository root path. Auto-detected from current directory if omitted.
         base: Git ref to diff against for incremental updates. Default: HEAD~1.
     """
-    return build_or_update_graph(
-        full_rebuild=full_rebuild, repo_root=repo_root, base=base
+    return _execute_tool(
+        "build_or_update_graph",
+        build_or_update_graph,
+        tool_args={
+            "full_rebuild": full_rebuild,
+            "repo_root": repo_root,
+            "base": base,
+        },
+        repo_root=repo_root,
     )
 
 
@@ -96,9 +123,16 @@ def get_impact_radius_tool(
         repo_root: Repository root path. Auto-detected if omitted.
         base: Git ref for auto-detecting changes. Default: HEAD~1.
     """
-    return get_impact_radius(
-        changed_files=changed_files, max_depth=max_depth,
-        repo_root=repo_root, base=base,
+    return _execute_tool(
+        "get_impact_radius",
+        get_impact_radius,
+        tool_args={
+            "changed_files": changed_files,
+            "max_depth": max_depth,
+            "repo_root": repo_root,
+            "base": base,
+        },
+        repo_root=repo_root,
     )
 
 
@@ -125,7 +159,16 @@ def query_graph_tool(
         target: Node name, qualified name, or file path to query.
         repo_root: Repository root path. Auto-detected if omitted.
     """
-    return query_graph(pattern=pattern, target=target, repo_root=repo_root)
+    return _execute_tool(
+        "query_graph",
+        query_graph,
+        tool_args={
+            "pattern": pattern,
+            "target": target,
+            "repo_root": repo_root,
+        },
+        repo_root=repo_root,
+    )
 
 
 @mcp.tool()
@@ -150,10 +193,18 @@ def get_review_context_tool(
         repo_root: Repository root path. Auto-detected if omitted.
         base: Git ref for change detection. Default: HEAD~1.
     """
-    return get_review_context(
-        changed_files=changed_files, max_depth=max_depth,
-        include_source=include_source, max_lines_per_file=max_lines_per_file,
-        repo_root=repo_root, base=base,
+    return _execute_tool(
+        "get_review_context",
+        get_review_context,
+        tool_args={
+            "changed_files": changed_files,
+            "max_depth": max_depth,
+            "include_source": include_source,
+            "max_lines_per_file": max_lines_per_file,
+            "repo_root": repo_root,
+            "base": base,
+        },
+        repo_root=repo_root,
     )
 
 
@@ -179,8 +230,17 @@ def semantic_search_nodes_tool(
                during embed_graph. Falls back to CRG_EMBEDDING_MODEL env var,
                then all-MiniLM-L6-v2.
     """
-    return semantic_search_nodes(
-        query=query, kind=kind, limit=limit, repo_root=repo_root, model=model
+    return _execute_tool(
+        "semantic_search_nodes",
+        semantic_search_nodes,
+        tool_args={
+            "query": query,
+            "kind": kind,
+            "limit": limit,
+            "repo_root": repo_root,
+            "model": model,
+        },
+        repo_root=repo_root,
     )
 
 
@@ -204,7 +264,12 @@ def embed_graph_tool(
         model: Embedding model name (HuggingFace ID or local path).
                Falls back to CRG_EMBEDDING_MODEL env var, then all-MiniLM-L6-v2.
     """
-    return embed_graph(repo_root=repo_root, model=model)
+    return _execute_tool(
+        "embed_graph",
+        embed_graph,
+        tool_args={"repo_root": repo_root, "model": model},
+        repo_root=repo_root,
+    )
 
 
 @mcp.tool()
@@ -219,7 +284,12 @@ def list_graph_stats_tool(
     Args:
         repo_root: Repository root path. Auto-detected if omitted.
     """
-    return list_graph_stats(repo_root=repo_root)
+    return _execute_tool(
+        "list_graph_stats",
+        list_graph_stats,
+        tool_args={"repo_root": repo_root},
+        repo_root=repo_root,
+    )
 
 
 @mcp.tool()
@@ -237,7 +307,12 @@ def get_docs_section_tool(
     Args:
         section_name: The section to retrieve (e.g. "review-delta", "usage").
     """
-    return get_docs_section(section_name=section_name, repo_root=_default_repo_root)
+    return _execute_tool(
+        "get_docs_section",
+        get_docs_section,
+        tool_args={"section_name": section_name, "repo_root": _default_repo_root},
+        repo_root=_default_repo_root,
+    )
 
 
 @mcp.tool()
@@ -260,9 +335,17 @@ def find_large_functions_tool(
         limit: Maximum results. Default: 50.
         repo_root: Repository root path. Auto-detected if omitted.
     """
-    return find_large_functions(
-        min_lines=min_lines, kind=kind, file_path_pattern=file_path_pattern,
-        limit=limit, repo_root=repo_root,
+    return _execute_tool(
+        "find_large_functions",
+        find_large_functions,
+        tool_args={
+            "min_lines": min_lines,
+            "kind": kind,
+            "file_path_pattern": file_path_pattern,
+            "limit": limit,
+            "repo_root": repo_root,
+        },
+        repo_root=repo_root,
     )
 
 
@@ -285,8 +368,16 @@ def list_flows_tool(
         kind: Optional filter by entry point kind (e.g. "Test", "Function").
         repo_root: Repository root path. Auto-detected if omitted.
     """
-    return list_flows(
-        repo_root=repo_root, sort_by=sort_by, limit=limit, kind=kind,
+    return _execute_tool(
+        "list_flows",
+        list_flows,
+        tool_args={
+            "repo_root": repo_root,
+            "sort_by": sort_by,
+            "limit": limit,
+            "kind": kind,
+        },
+        repo_root=repo_root,
     )
 
 
@@ -310,9 +401,16 @@ def get_flow_tool(
         include_source: Include source code snippets for each step. Default: False.
         repo_root: Repository root path. Auto-detected if omitted.
     """
-    return get_flow(
-        flow_id=flow_id, flow_name=flow_name,
-        include_source=include_source, repo_root=repo_root,
+    return _execute_tool(
+        "get_flow",
+        get_flow,
+        tool_args={
+            "flow_id": flow_id,
+            "flow_name": flow_name,
+            "include_source": include_source,
+            "repo_root": repo_root,
+        },
+        repo_root=repo_root,
     )
 
 
@@ -333,8 +431,15 @@ def get_affected_flows_tool(
         base: Git ref for auto-detecting changes. Default: HEAD~1.
         repo_root: Repository root path. Auto-detected if omitted.
     """
-    return get_affected_flows_func(
-        changed_files=changed_files, base=base, repo_root=repo_root,
+    return _execute_tool(
+        "get_affected_flows",
+        get_affected_flows_func,
+        tool_args={
+            "changed_files": changed_files,
+            "base": base,
+            "repo_root": repo_root,
+        },
+        repo_root=repo_root,
     )
 
 
@@ -355,8 +460,15 @@ def list_communities_tool(
         min_size: Minimum community size to include. Default: 0.
         repo_root: Repository root path. Auto-detected if omitted.
     """
-    return list_communities_func(
-        repo_root=repo_root, sort_by=sort_by, min_size=min_size,
+    return _execute_tool(
+        "list_communities",
+        list_communities_func,
+        tool_args={
+            "repo_root": repo_root,
+            "sort_by": sort_by,
+            "min_size": min_size,
+        },
+        repo_root=repo_root,
     )
 
 
@@ -381,9 +493,16 @@ def get_community_tool(
         include_members: Include full member node details. Default: False.
         repo_root: Repository root path. Auto-detected if omitted.
     """
-    return get_community_func(
-        community_name=community_name, community_id=community_id,
-        include_members=include_members, repo_root=repo_root,
+    return _execute_tool(
+        "get_community",
+        get_community_func,
+        tool_args={
+            "community_name": community_name,
+            "community_id": community_id,
+            "include_members": include_members,
+            "repo_root": repo_root,
+        },
+        repo_root=repo_root,
     )
 
 
@@ -400,7 +519,12 @@ def get_architecture_overview_tool(
     Args:
         repo_root: Repository root path. Auto-detected if omitted.
     """
-    return get_architecture_overview_func(repo_root=repo_root)
+    return _execute_tool(
+        "get_architecture_overview",
+        get_architecture_overview_func,
+        tool_args={"repo_root": repo_root},
+        repo_root=repo_root,
+    )
 
 
 @mcp.tool()
@@ -424,9 +548,16 @@ def detect_changes_tool(
         max_depth: Impact radius depth for BFS traversal. Default: 2.
         repo_root: Repository root path. Auto-detected if omitted.
     """
-    return detect_changes_func(
-        base=base, changed_files=changed_files,
-        include_source=include_source, max_depth=max_depth,
+    return _execute_tool(
+        "detect_changes",
+        detect_changes_func,
+        tool_args={
+            "base": base,
+            "changed_files": changed_files,
+            "include_source": include_source,
+            "max_depth": max_depth,
+            "repo_root": repo_root,
+        },
         repo_root=repo_root,
     )
 
@@ -461,9 +592,18 @@ def refactor_tool(
         file_pattern: (dead_code) Filter by file path substring.
         repo_root: Repository root path. Auto-detected if omitted.
     """
-    return refactor_func(
-        mode=mode, old_name=old_name, new_name=new_name,
-        kind=kind, file_pattern=file_pattern, repo_root=repo_root,
+    return _execute_tool(
+        "refactor",
+        refactor_func,
+        tool_args={
+            "mode": mode,
+            "old_name": old_name,
+            "new_name": new_name,
+            "kind": kind,
+            "file_pattern": file_pattern,
+            "repo_root": repo_root,
+        },
+        repo_root=repo_root,
     )
 
 
@@ -485,8 +625,11 @@ def apply_refactor_tool(
         refactor_id: The refactor ID from refactor_tool's response.
         repo_root: Repository root path. Auto-detected if omitted.
     """
-    return apply_refactor_func(
-        refactor_id=refactor_id, repo_root=repo_root,
+    return _execute_tool(
+        "apply_refactor",
+        apply_refactor_func,
+        tool_args={"refactor_id": refactor_id, "repo_root": repo_root},
+        repo_root=repo_root,
     )
 
 
@@ -505,7 +648,12 @@ def generate_wiki_tool(
         repo_root: Repository root path. Auto-detected if omitted.
         force: If True, regenerate all pages even if content unchanged. Default: False.
     """
-    return generate_wiki_func(repo_root=repo_root, force=force)
+    return _execute_tool(
+        "generate_wiki",
+        generate_wiki_func,
+        tool_args={"repo_root": repo_root, "force": force},
+        repo_root=repo_root,
+    )
 
 
 @mcp.tool()
@@ -522,7 +670,12 @@ def get_wiki_page_tool(
         community_name: Community name to look up.
         repo_root: Repository root path. Auto-detected if omitted.
     """
-    return get_wiki_page_func(community_name=community_name, repo_root=repo_root)
+    return _execute_tool(
+        "get_wiki_page",
+        get_wiki_page_func,
+        tool_args={"community_name": community_name, "repo_root": repo_root},
+        repo_root=repo_root,
+    )
 
 
 @mcp.tool()
@@ -532,7 +685,12 @@ def list_repos_tool() -> dict:
     Returns the list of repos registered at ~/.code-review-graph/registry.json.
     Use the CLI 'register' command to add repos.
     """
-    return list_repos_func()
+    return _execute_tool(
+        "list_repos",
+        list_repos_func,
+        tool_args={},
+        repo_root=None,
+    )
 
 
 @mcp.tool()
@@ -551,7 +709,36 @@ def cross_repo_search_tool(
         kind: Optional filter: File, Class, Function, Type, or Test.
         limit: Maximum results per repo. Default: 20.
     """
-    return cross_repo_search_func(query=query, kind=kind, limit=limit)
+    return _execute_tool(
+        "cross_repo_search",
+        cross_repo_search_func,
+        tool_args={"query": query, "kind": kind, "limit": limit},
+        repo_root=None,
+    )
+
+
+@mcp.tool()
+def get_token_usage_tool(
+    repo_root: Optional[str] = None,
+    include_tools: bool = True,
+    reset: bool = False,
+) -> dict:
+    """Get local token usage split by review vs non-review commands.
+
+    This reports estimated token usage accumulated from MCP tool calls.
+    Use reset=True to clear counters after reading.
+
+    Args:
+        repo_root: Repository root path. Auto-detected if omitted.
+        include_tools: Include per-tool breakdown. Default: True.
+        reset: Reset counters before returning. Default: False.
+    """
+    return get_token_usage_summary(
+        repo_root=repo_root,
+        default_repo_root=_default_repo_root,
+        include_tools=include_tools,
+        reset=reset,
+    )
 
 
 @mcp.prompt()

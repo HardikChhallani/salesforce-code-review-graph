@@ -296,6 +296,9 @@ def full_build(repo_root: Path, store: GraphStore) -> dict:
     current_abs = {str(repo_root / f) for f in files}
     for stale in existing_files - current_abs:
         store.remove_file_data(stale)
+    # remove_file_data starts an implicit SQLite transaction. Commit once here
+    # so per-file atomic replacements (BEGIN IMMEDIATE) can run safely.
+    store.commit()
 
     total_nodes = 0
     total_edges = 0
@@ -556,5 +559,4 @@ def watch(repo_root: Path, store: GraphStore) -> None:
         observer.stop()
     observer.join()
     logger.info("Watch stopped.")
-
 
