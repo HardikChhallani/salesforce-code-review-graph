@@ -192,6 +192,34 @@ class TestFullBuild:
         finally:
             store.close()
 
+    def test_full_build_with_stale_entries_commits_before_reparse(self, tmp_path):
+        """Regression: stale-file cleanup should not break per-file transactions."""
+        (tmp_path / ".git").mkdir()
+        old_file = tmp_path / "old.py"
+        old_file.write_text("def old():\n    return 1\n")
+
+        db_path = tmp_path / "test.db"
+        store = GraphStore(db_path)
+        try:
+            mock_target = "code_review_graph.incremental.get_all_tracked_files"
+            with patch(mock_target, return_value=["old.py"]):
+                full_build(tmp_path, store)
+
+            # Replace tracked file list so old.py becomes stale.
+            old_file.unlink()
+            new_file = tmp_path / "new.py"
+            new_file.write_text("def new():\n    return 2\n")
+
+            with patch(mock_target, return_value=["new.py"]):
+                result = full_build(tmp_path, store)
+
+            assert result["files_parsed"] == 1
+            assert result["errors"] == []
+            assert store.get_node(str(new_file)) is not None
+            assert store.get_node(str(old_file)) is None
+        finally:
+            store.close()
+
 
 class TestIncrementalUpdate:
     def test_incremental_with_no_changes(self, tmp_path):
