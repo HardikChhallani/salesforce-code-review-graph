@@ -560,6 +560,17 @@ export class GraphWebviewPanel {
 
     <div class="toolbar-separator"></div>
 
+    <!-- Node kind legend (informational) -->
+    <div class="toolbar-group" id="node-legend" style="gap:4px">
+      <span class="toolbar-label">Nodes</span>
+      <span style="display:inline-flex;align-items:center;gap:3px;font-size:10px"><span style="width:8px;height:8px;border-radius:50%;background:#cba6f7;display:inline-block"></span>File</span>
+      <span style="display:inline-flex;align-items:center;gap:3px;font-size:10px"><span style="width:8px;height:8px;border-radius:50%;background:#f9e2af;display:inline-block"></span>Class</span>
+      <span style="display:inline-flex;align-items:center;gap:3px;font-size:10px"><span style="width:8px;height:8px;border-radius:50%;background:#a6e3a1;display:inline-block"></span>Method</span>
+      <span style="display:inline-flex;align-items:center;gap:3px;font-size:10px"><span style="width:8px;height:8px;border-radius:50%;background:#74c7ec;display:inline-block"></span>SOQL</span>
+    </div>
+
+    <div class="toolbar-separator"></div>
+
     <!-- Depth slider -->
     <div class="toolbar-group">
       <span class="toolbar-label">Depth</span>

@@ -2,12 +2,12 @@
 
 ## Project Overview
 
-**code-review-graph** is a persistent, incrementally-updated knowledge graph for token-efficient code reviews with Claude Code. It parses codebases using Tree-sitter, builds a structural graph in SQLite, and exposes it via MCP tools and prompts.
+**code-review-graph** is a persistent, incrementally-updated knowledge graph for token-efficient code reviews with Claude Code. It parses Salesforce codebases using Tree-sitter, builds a structural graph in SQLite, and exposes it via MCP tools and prompts. Includes full Apex (.cls, .trigger) support.
 
 ## Architecture
 
 - **Core Package**: `code_review_graph/` (Python 3.10+)
-  - `parser.py` — Tree-sitter multi-language AST parser (19 languages including Vue SFC, Solidity, Dart, R, Perl, Lua + Jupyter/Databricks notebooks)
+  - `parser.py` — Tree-sitter multi-language AST parser (20 languages including Vue SFC, Solidity, Dart, R, Perl, Lua, Apex + Jupyter/Databricks notebooks)
   - `graph.py` — SQLite-backed graph store (nodes, edges, BFS impact analysis)
   - `tools.py` — 22 MCP tool implementations
   - `main.py` — FastMCP server entry point (stdio transport), registers 22 tools + 5 prompts

@@ -111,6 +111,86 @@ class GraphStats:
 
 
 # ---------------------------------------------------------------------------
+# Local token usage accounting
+# ---------------------------------------------------------------------------
+
+_TOKEN_USAGE_METADATA_KEY = "token_usage"
+_TOKEN_USAGE_CATEGORIES = ("code_review_graph", "non_code_review_graph")
+
+
+def _empty_token_bucket() -> dict[str, int]:
+    return {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+    }
+
+
+def _empty_token_usage_state() -> dict[str, Any]:
+    return {
+        "totals": {
+            category: _empty_token_bucket().copy()
+            for category in _TOKEN_USAGE_CATEGORIES
+        },
+        "tools": {},
+        "last_updated": None,
+    }
+
+
+def _coerce_non_negative_int(value: Any) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, n)
+
+
+def _normalise_token_bucket(raw: Any) -> dict[str, int]:
+    out = _empty_token_bucket()
+    if isinstance(raw, dict):
+        for key in out:
+            out[key] = _coerce_non_negative_int(raw.get(key))
+    min_total = out["input_tokens"] + out["output_tokens"]
+    if out["total_tokens"] < min_total:
+        out["total_tokens"] = min_total
+    return out
+
+
+def _normalise_token_usage_state(raw: Any) -> dict[str, Any]:
+    state = _empty_token_usage_state()
+    if not isinstance(raw, dict):
+        return state
+
+    raw_totals = raw.get("totals")
+    if isinstance(raw_totals, dict):
+        for category in _TOKEN_USAGE_CATEGORIES:
+            state["totals"][category] = _normalise_token_bucket(
+                raw_totals.get(category)
+            )
+
+    raw_tools = raw.get("tools")
+    if isinstance(raw_tools, dict):
+        normalised_tools: dict[str, dict[str, Any]] = {}
+        for name, details in raw_tools.items():
+            if not isinstance(name, str) or not isinstance(details, dict):
+                continue
+            category = details.get("category")
+            if category not in _TOKEN_USAGE_CATEGORIES:
+                category = "non_code_review_graph"
+            bucket = _normalise_token_bucket(details)
+            normalised_tools[name] = {
+                **bucket,
+                "category": category,
+                "last_called_at": details.get("last_called_at"),
+            }
+        state["tools"] = normalised_tools
+
+    state["last_updated"] = raw.get("last_updated")
+    return state
+
+
+# ---------------------------------------------------------------------------
 # GraphStore
 # ---------------------------------------------------------------------------
 
@@ -254,6 +334,78 @@ class GraphStore:
     def get_metadata(self, key: str) -> Optional[str]:
         row = self._conn.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
         return row["value"] if row else None
+
+    def get_token_usage(self) -> dict[str, Any]:
+        """Get local token usage counters from metadata."""
+        raw = self.get_metadata(_TOKEN_USAGE_METADATA_KEY)
+        if not raw:
+            return _empty_token_usage_state()
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return _empty_token_usage_state()
+        return _normalise_token_usage_state(parsed)
+
+    def record_token_usage(
+        self,
+        tool_name: str,
+        category: str,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> dict[str, Any]:
+        """Record token usage for one MCP tool call.
+
+        Counters are stored locally in the graph DB metadata under the
+        ``token_usage`` key.
+        """
+        if category not in _TOKEN_USAGE_CATEGORIES:
+            category = "non_code_review_graph"
+        input_tokens = _coerce_non_negative_int(input_tokens)
+        output_tokens = _coerce_non_negative_int(output_tokens)
+        total_tokens = input_tokens + output_tokens
+        now = time.strftime("%Y-%m-%dT%H:%M:%S")
+
+        usage = self.get_token_usage()
+
+        totals_bucket = usage["totals"].setdefault(category, _empty_token_bucket().copy())
+        totals_bucket["calls"] += 1
+        totals_bucket["input_tokens"] += input_tokens
+        totals_bucket["output_tokens"] += output_tokens
+        totals_bucket["total_tokens"] += total_tokens
+
+        tools = usage.setdefault("tools", {})
+        entry = tools.get(tool_name)
+        if not isinstance(entry, dict):
+            entry = _empty_token_bucket().copy()
+        entry["calls"] = _coerce_non_negative_int(entry.get("calls")) + 1
+        entry["input_tokens"] = (
+            _coerce_non_negative_int(entry.get("input_tokens")) + input_tokens
+        )
+        entry["output_tokens"] = (
+            _coerce_non_negative_int(entry.get("output_tokens")) + output_tokens
+        )
+        entry["total_tokens"] = (
+            _coerce_non_negative_int(entry.get("total_tokens")) + total_tokens
+        )
+        entry["category"] = category
+        entry["last_called_at"] = now
+        tools[tool_name] = entry
+
+        usage["last_updated"] = now
+        self.set_metadata(
+            _TOKEN_USAGE_METADATA_KEY,
+            json.dumps(usage, sort_keys=True, separators=(",", ":")),
+        )
+        return usage
+
+    def reset_token_usage(self) -> dict[str, Any]:
+        """Reset all token usage counters to zero."""
+        usage = _empty_token_usage_state()
+        self.set_metadata(
+            _TOKEN_USAGE_METADATA_KEY,
+            json.dumps(usage, sort_keys=True, separators=(",", ":")),
+        )
+        return usage
 
     def commit(self) -> None:
         self._conn.commit()
