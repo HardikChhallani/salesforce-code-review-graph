@@ -7,6 +7,7 @@ Usage:
     code-review-graph update [--base BASE]
     code-review-graph watch
     code-review-graph status
+    code-review-graph token-usage [--json] [--reset]
     code-review-graph serve
     code-review-graph visualize
     code-review-graph wiki
@@ -80,6 +81,7 @@ def _print_banner() -> None:
     {g}update{r}      Incremental update {d}(changed files only){r}
     {g}watch{r}       Auto-update on file changes
     {g}status{r}      Show graph statistics
+    {g}token-usage{r} Show token usage split (review vs non-review)
     {g}visualize{r}   Generate interactive HTML graph
     {g}wiki{r}        Generate markdown wiki from communities
     {g}detect-changes{r} Analyze change impact {d}(risk-scored review){r}
@@ -148,6 +150,61 @@ def _handle_init(args: argparse.Namespace) -> None:
     print("Next steps:")
     print("  1. code-review-graph build    # build the knowledge graph")
     print("  2. Restart your AI coding tool to pick up the new config")
+
+
+def _as_int(value: object) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _print_token_usage_summary(usage: dict, repo_root: Path) -> None:
+    """Print token usage counters in a readable format."""
+    totals = usage.get("totals", {})
+    review = totals.get("code_review_graph", {})
+    non_review = totals.get("non_code_review_graph", {})
+
+    print(f"Token usage for: {repo_root}")
+    print(
+        "  code_review_graph: "
+        f"calls={_as_int(review.get('calls'))}, "
+        f"input={_as_int(review.get('input_tokens'))}, "
+        f"output={_as_int(review.get('output_tokens'))}, "
+        f"total={_as_int(review.get('total_tokens'))}"
+    )
+    print(
+        "  non_code_review_graph: "
+        f"calls={_as_int(non_review.get('calls'))}, "
+        f"input={_as_int(non_review.get('input_tokens'))}, "
+        f"output={_as_int(non_review.get('output_tokens'))}, "
+        f"total={_as_int(non_review.get('total_tokens'))}"
+    )
+
+    raw_tools = usage.get("tools", {})
+    if not isinstance(raw_tools, dict) or not raw_tools:
+        return
+
+    entries = []
+    for name, data in raw_tools.items():
+        if not isinstance(name, str) or not isinstance(data, dict):
+            continue
+        entries.append(
+            (
+                name,
+                data.get("category", "non_code_review_graph"),
+                _as_int(data.get("calls")),
+                _as_int(data.get("total_tokens")),
+            )
+        )
+
+    if not entries:
+        return
+
+    entries.sort(key=lambda item: item[3], reverse=True)
+    print("Top tools by total tokens:")
+    for name, category, calls, total in entries[:10]:
+        print(f"  {name}: category={category}, calls={calls}, total={total}")
 
 
 def main() -> None:
@@ -239,6 +296,21 @@ def main() -> None:
     # status
     status_cmd = sub.add_parser("status", help="Show graph statistics")
     status_cmd.add_argument("--repo", default=None, help="Repository root (auto-detected)")
+
+    # token usage
+    token_usage_cmd = sub.add_parser(
+        "token-usage",
+        help="Show local token usage split by review vs non-review tools",
+    )
+    token_usage_cmd.add_argument(
+        "--repo", default=None, help="Repository root (auto-detected)"
+    )
+    token_usage_cmd.add_argument(
+        "--json", action="store_true", help="Print raw JSON instead of formatted text"
+    )
+    token_usage_cmd.add_argument(
+        "--reset", action="store_true", help="Reset counters before printing"
+    )
 
     # visualize
     vis_cmd = sub.add_parser("visualize", help="Generate interactive HTML graph visualization")
@@ -457,6 +529,23 @@ def main() -> None:
                     f"but you are now on '{current_branch}'. "
                     f"Run 'code-review-graph build' to rebuild."
                 )
+
+        elif args.command == "token-usage":
+            usage = store.reset_token_usage() if args.reset else store.get_token_usage()
+            if args.json:
+                print(
+                    json.dumps(
+                        {
+                            "repo_root": str(repo_root),
+                            "usage": usage,
+                        },
+                        indent=2,
+                    )
+                )
+            else:
+                if args.reset:
+                    print("Token usage counters reset.")
+                _print_token_usage_summary(usage, repo_root)
 
         elif args.command == "watch":
             watch(repo_root, store)

@@ -18,7 +18,7 @@ declare function acquireVsCodeApi(): {
 // Types
 // ---------------------------------------------------------------------------
 
-type NodeKind = "File" | "Class" | "Function" | "Test" | "Type";
+type NodeKind = "File" | "Class" | "Function" | "Test" | "Type" | "SoqlQuery";
 
 type EdgeKind =
   | "CALLS"
@@ -75,6 +75,7 @@ const NODE_RADIUS: Record<NodeKind, number> = {
   Function: 10,
   Test: 10,
   Type: 10,
+  SoqlQuery: 9,
 };
 
 const NODE_COLOR: Record<NodeKind, string> = {
@@ -83,6 +84,7 @@ const NODE_COLOR: Record<NodeKind, string> = {
   Function: "#a6e3a1",
   Test: "#89b4fa",
   Type: "#fab387",
+  SoqlQuery: "#74c7ec",
 };
 
 const EDGE_COLOR: Record<EdgeKind, string> = {

@@ -1,4 +1,4 @@
-<h1 align="center">code-review-graph</h1>
+<h1 align="center">Salesforce Code Review Graph</h1>
 
 <p align="center">
   <strong>Stop burning tokens. Start reviewing smarter.</strong>
@@ -9,7 +9,7 @@
   <a href="https://discord.gg/3p58KXqGFN"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://github.com/tirth8205/code-review-graph/stargazers"><img src="https://img.shields.io/github/stars/tirth8205/code-review-graph?style=flat-square" alt="Stars"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="MIT Licence"></a>
-  <a href="https://github.com/tirth8205/code-review-graph/actions/workflows/ci.yml"><img src="https://github.com/tirth8205/code-review-graph/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/tirth8205/code-review-graph/actions/workflows/ci.yml"><img src="https://img.shields.io/badge/salesforce-apex--support-green.svg?style=flat-square" alt="Salesforce Apex"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg?style=flat-square" alt="Python 3.10+"></a>
   <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-compatible-green.svg?style=flat-square" alt="MCP"></a>
   <a href="#"><img src="https://img.shields.io/badge/version-2.1.0-purple.svg?style=flat-square" alt="v2.1.0"></a>
@@ -17,7 +17,9 @@
 
 <br>
 
-AI coding tools re-read your entire codebase on every task. `code-review-graph` fixes that. It builds a structural map of your code with [Tree-sitter](https://tree-sitter.github.io/tree-sitter/), tracks changes incrementally, and gives your AI assistant precise context via [MCP](https://modelcontextprotocol.io/) so it reads only what matters.
+AI coding tools re-read your entire codebase on every task. `code-review-graph` fixes that. It builds a structural map of your Salesforce codebase with [Tree-sitter](https://tree-sitter.github.io/tree-sitter/), tracks changes incrementally, and gives your AI assistant precise context via [MCP](https://modelcontextprotocol.io/) so it reads only what matters.
+
+Built specifically for Salesforce development with full Apex (.cls, .trigger) and Salesforce Flow support, plus 19 other languages including Lightning Web Components, Visualforce, and SOQL/SOSL parsing.
 
 <p align="center">
   <img src="diagrams/diagram1_before_vs_after.png" alt="The Token Problem: 8.2x average token reduction across 6 real repositories" width="85%" />
@@ -30,7 +32,7 @@ AI coding tools re-read your entire codebase on every task. `code-review-graph` 
 ```bash
 pip install code-review-graph                     # or: pipx install code-review-graph
 code-review-graph install          # auto-detects and configures all supported platforms
-code-review-graph build            # parse your codebase
+code-review-graph build            # parse your Salesforce codebase
 ```
 
 One command sets up everything. `install` detects which AI coding tools you have, writes the correct MCP configuration for each one, and injects graph-aware instructions into your platform rules. It auto-detects whether you installed via `uvx` or `pip`/`pipx` and generates the right config. Restart your editor/tool after installing.
@@ -48,10 +50,10 @@ code-review-graph install --platform claude-code  # configure only Claude Code
 
 Requires Python 3.10+. For the best experience, install [uv](https://docs.astral.sh/uv/) (the MCP config will use `uvx` if available, otherwise falls back to the `code-review-graph` command directly).
 
-Then open your project and ask your AI assistant:
+Then open your Salesforce project and ask your AI assistant:
 
 ```
-Build the code review graph for this project
+Build the code review graph for this Salesforce project
 ```
 
 The initial build takes ~10 seconds for a 500-file project. After that, the graph updates automatically on every file edit and git commit.
@@ -64,10 +66,10 @@ The initial build takes ~10 seconds for a 500-file project. After that, the grap
   <img src="diagrams/diagram7_mcp_integration_flow.png" alt="How your AI assistant uses the graph: User asks for review, AI checks MCP tools, graph returns blast radius and risk scores, AI reads only what matters" width="80%" />
 </p>
 
-Your repository is parsed into an AST with Tree-sitter, stored as a graph of nodes (functions, classes, imports) and edges (calls, inheritance, test coverage), then queried at review time to compute the minimal set of files your AI assistant needs to read.
+Your Salesforce repository is parsed into an AST with Tree-sitter, stored as a graph of nodes (classes, functions, triggers, flows) and edges (calls, inheritance, test coverage), then queried at review time to compute the minimal set of files your AI assistant needs to read.
 
 <p align="center">
-  <img src="diagrams/diagram2_architecture_pipeline.png" alt="Architecture pipeline: Repository to Tree-sitter Parser to SQLite Graph to Blast Radius to Minimal Review Set" width="100%" />
+  <img src="diagrams/diagram2_architecture_pipeline.png" alt="Architecture pipeline: Salesforce Repository to Tree-sitter Parser to SQLite Graph to Blast Radius to Minimal Review Set" width="100%" />
 </p>
 
 ### Blast-radius analysis
@@ -94,13 +96,13 @@ Large monorepos are where token waste is most painful. The graph cuts through th
   <img src="diagrams/diagram6_monorepo_funnel.png" alt="Next.js monorepo: 27,732 files funnelled through code-review-graph down to ~15 files — 49x fewer tokens" width="80%" />
 </p>
 
-### 19 languages + Jupyter notebooks
+### 20 languages + Salesforce + Jupyter notebooks
 
 <p align="center">
-  <img src="diagrams/diagram9_language_coverage.png" alt="19 languages organized by category: Web, Backend, Systems, Mobile, Scripting, plus Jupyter/Databricks notebook support" width="90%" />
+  <img src="diagrams/diagram9_language_coverage.png" alt="20 languages organized by category: Web, Backend, Systems, Mobile, Scripting, Salesforce, plus Jupyter/Databricks notebook support" width="90%" />
 </p>
 
-Full Tree-sitter grammar support for functions, classes, imports, call sites, inheritance, and test detection in every language. Plus Jupyter/Databricks notebook parsing (`.ipynb`) with multi-language cell support (Python, R, SQL), and Perl XS files (`.xs`).
+Full Tree-sitter grammar support for functions, classes, imports, call sites, inheritance, and test detection in every language. Plus Salesforce-specific parsing for Apex classes (.cls), triggers (.trigger), and Lightning Web Components. Jupyter/Databricks notebook parsing (.ipynb) with multi-language cell support (Python, R, SQL), and Perl XS files (.xs).
 
 ---
 
@@ -182,7 +184,7 @@ The blast-radius analysis never misses an actually impacted file (perfect recall
 | Feature | Details |
 |---------|---------|
 | **Incremental updates** | Re-parses only changed files. Subsequent updates complete in under 2 seconds. |
-| **19 languages + notebooks** | Python, TypeScript/TSX, JavaScript, Vue, Go, Rust, Java, Scala, C#, Ruby, Kotlin, Swift, PHP, Solidity, C/C++, Dart, R, Perl, Lua, Jupyter/Databricks (.ipynb) |
+| **20 languages + Salesforce + notebooks** | Python, TypeScript/TSX, JavaScript, Vue, Go, Rust, Java, Scala, C#, Ruby, Kotlin, Swift, PHP, Solidity, C/C++, Dart, R, Perl, Lua, **Apex**, Jupyter/Databricks (.ipynb) |
 | **Blast-radius analysis** | Shows exactly which functions, classes, and files are affected by any change |
 | **Auto-update hooks** | Graph updates on every file edit and git commit without manual intervention |
 | **Semantic search** | Optional vector embeddings via sentence-transformers, Google Gemini, or MiniMax |

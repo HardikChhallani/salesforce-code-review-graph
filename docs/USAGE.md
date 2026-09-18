@@ -1,4 +1,4 @@
-# Code Review Graph — User Guide
+# Salesforce Code Review Graph — User Guide
 
 **Version:** v2.1.0 (Apr 3, 2026)
 
@@ -7,7 +7,7 @@
 ```bash
 pip install code-review-graph
 code-review-graph install    # auto-detects and configures all supported platforms
-code-review-graph build      # parse your codebase
+code-review-graph build      # parse your Salesforce codebase
 ```
 
 `install` detects which AI coding tools you have and writes the correct MCP configuration for each one. Restart your editor/tool after installing.

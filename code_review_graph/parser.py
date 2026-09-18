@@ -17,13 +17,6 @@ from typing import NamedTuple, Optional
 import tree_sitter_language_pack as tslp
 
 from .tsconfig_resolver import TsconfigResolver
-from tree_sitter import Language, Parser
-import tree_sitter_language_pack as tslp
-
-APEX_LANGUAGE = Language(
-    "/Users/hardikchhallani/Desktop/code-review-graph/build/my-languages.so",
-    "apex"
-)
 
 class CellInfo(NamedTuple):
     """Represents a single cell in a notebook with its language."""
@@ -301,9 +294,7 @@ class CodeParser:
     def _get_parser(self, language: str):
         if language not in self._parsers:
             if language == "apex":
-                parser = Parser()
-                parser.set_language(APEX_LANGUAGE)
-                self._parsers[language] = parser
+                return None  # Apex parsing is handled separately via parse_apex_file
             else:
                 self._parsers[language] = tslp.get_parser(language)
 
@@ -312,13 +303,436 @@ class CodeParser:
     def detect_language(self, path: Path) -> Optional[str]:
         return EXTENSION_TO_LANGUAGE.get(path.suffix.lower())
 
-    def parse_file(self, path: Path) -> tuple[list[NodeInfo], list[EdgeInfo]]:
-        """Parse a single file and return extracted nodes and edges."""
-        try:
-            source = path.read_bytes()
-        except (OSError, PermissionError):
-            return [], []
-        return self.parse_bytes(path, source)
+    @staticmethod
+    def _extract_apex_identifier(node):
+        """Extract an identifier from an ANTLR AST node.
+
+        Looks for the first IdContext child which holds the name
+        for ClassDeclarationContext, MethodDeclarationContext, etc.
+        """
+        for child in node.get("children", []):
+            if child.get("type") == "IdContext":
+                return child.get("text", "")
+        # Fallback: parse from the node's own text
+        text = node.get("text", "")
+        return text.split("(")[0].strip().split()[-1] if text else ""
+
+    def _parse_apex(self, file_path: str, source: bytes) -> tuple[list[NodeInfo], list[EdgeInfo]]:
+        """Parse an Apex file via the ANTLR-based Node.js parser.
+
+        Runs apex_parser/parse_apex.js as a subprocess and walks the
+        resulting JSON AST to produce NodeInfo / EdgeInfo lists.
+        """
+        from .apex_parser import parse_apex_file
+
+        ast = parse_apex_file(file_path)
+
+        nodes: list[NodeInfo] = []
+        edges: list[EdgeInfo] = []
+        file_path_str = str(file_path)
+        line_count = source.count(b"\n") + 1
+
+        # -------- FILE NODE --------
+        nodes.append(NodeInfo(
+            kind="File",
+            name=file_path_str,
+            file_path=file_path_str,
+            line_start=1,
+            line_end=line_count,
+            language="apex",
+        ))
+
+        current_class: Optional[str] = None
+        current_method: Optional[str] = None
+        # method_index: maps bare method name -> qualified_name
+        # used to resolve CALLS targets after the walk
+        method_index: dict[str, str] = {}
+        # soql_counter for unique SoqlQuery node names
+        soql_counter: list[int] = [0]
+
+        def walk(node, parent=None):
+            nonlocal current_class, current_method
+
+            node_type = node.get("type", "")
+            start_line = node.get("startLine", 0)
+            end_line = node.get("endLine", start_line)
+
+            # -------- TRIGGER --------
+            if node_type == "TriggerUnitContext":
+                # Trigger name is the first IdContext child
+                trigger_name = self._extract_apex_identifier(node)
+                if trigger_name:
+                    current_class = trigger_name
+                    qualified = self._qualify(trigger_name, file_path_str, None)
+                    nodes.append(NodeInfo(
+                        kind="Class",
+                        name=trigger_name,
+                        file_path=file_path_str,
+                        line_start=start_line,
+                        line_end=end_line,
+                        language="apex",
+                        extra={"apex_kind": "trigger"},
+                    ))
+                    edges.append(EdgeInfo(
+                        kind="CONTAINS",
+                        source=file_path_str,
+                        target=qualified,
+                        file_path=file_path_str,
+                        line=start_line,
+                    ))
+                    # Extract the SObject the trigger acts on (second IdContext)
+                    id_nodes = [c for c in node.get("children", [])
+                                if c.get("type") == "IdContext"]
+                    if len(id_nodes) >= 2:
+                        sobject_name = id_nodes[1].get("text", "")
+                        if sobject_name:
+                            edges.append(EdgeInfo(
+                                kind="DEPENDS_ON",
+                                source=qualified,
+                                target=sobject_name,
+                                file_path=file_path_str,
+                                line=start_line,
+                                extra={"relationship": "trigger_on"},
+                            ))
+                    # Trigger body code runs inline — set current_method so
+                    # DotMethodCallContext within the trigger body get a source.
+                    current_method = qualified
+
+            # -------- CLASS --------
+            if node_type == "ClassDeclarationContext":
+                class_name = self._extract_apex_identifier(node)
+                if class_name:
+                    prev_class = current_class
+                    current_class = class_name
+                    qualified = self._qualify(class_name, file_path_str, None)
+                    nodes.append(NodeInfo(
+                        kind="Class",
+                        name=class_name,
+                        file_path=file_path_str,
+                        line_start=start_line,
+                        line_end=end_line,
+                        language="apex",
+                    ))
+                    edges.append(EdgeInfo(
+                        kind="CONTAINS",
+                        source=file_path_str,
+                        target=qualified,
+                        file_path=file_path_str,
+                        line=start_line,
+                    ))
+
+                    # Check for extends / implements
+                    for child in node.get("children", []):
+                        child_type = child.get("type", "")
+                        if child_type == "TypeRefContext":
+                            # extends
+                            parent_type = child.get("text", "")
+                            if parent_type:
+                                edges.append(EdgeInfo(
+                                    kind="INHERITS",
+                                    source=qualified,
+                                    target=parent_type,
+                                    file_path=file_path_str,
+                                    line=start_line,
+                                ))
+                        if child_type == "TypeListContext":
+                            # implements
+                            for iface in child.get("children", []):
+                                iface_name = iface.get("text", "")
+                                if iface_name:
+                                    edges.append(EdgeInfo(
+                                        kind="IMPLEMENTS",
+                                        source=qualified,
+                                        target=iface_name,
+                                        file_path=file_path_str,
+                                        line=start_line,
+                                    ))
+
+                    # Recurse into class body
+                    for child in node.get("children", []):
+                        walk(child, node)
+
+                    current_class = prev_class
+                    return  # Skip the default recursion below
+
+            # -------- INTERFACE --------
+            if node_type == "InterfaceDeclarationContext":
+                iface_name = self._extract_apex_identifier(node)
+                if iface_name:
+                    qualified = self._qualify(iface_name, file_path_str, None)
+                    nodes.append(NodeInfo(
+                        kind="Class",
+                        name=iface_name,
+                        file_path=file_path_str,
+                        line_start=start_line,
+                        line_end=end_line,
+                        language="apex",
+                        extra={"apex_kind": "interface"},
+                    ))
+                    edges.append(EdgeInfo(
+                        kind="CONTAINS",
+                        source=file_path_str,
+                        target=qualified,
+                        file_path=file_path_str,
+                        line=start_line,
+                    ))
+
+            # -------- ENUM --------
+            if node_type == "EnumDeclarationContext":
+                enum_name = self._extract_apex_identifier(node)
+                if enum_name:
+                    qualified = self._qualify(enum_name, file_path_str, None)
+                    nodes.append(NodeInfo(
+                        kind="Class",
+                        name=enum_name,
+                        file_path=file_path_str,
+                        line_start=start_line,
+                        line_end=end_line,
+                        language="apex",
+                        extra={"apex_kind": "enum"},
+                    ))
+
+            # -------- METHOD --------
+            if node_type == "MethodDeclarationContext":
+                method_name = self._extract_apex_identifier(node)
+                if method_name:
+                    prev_method = current_method
+                    qualified = self._qualify(
+                        method_name, file_path_str, current_class,
+                    )
+                    current_method = qualified
+
+                    # Extract modifiers from parent ClassBodyDeclarationContext
+                    modifiers_list = []
+                    if parent and parent.get("type") == "ClassBodyDeclarationContext":
+                        for sib in parent.get("children", []):
+                            if sib.get("type") == "ModifierContext":
+                                modifiers_list.append(sib.get("text", ""))
+
+                    # Extract parameters
+                    params = ""
+                    for child in node.get("children", []):
+                        if child.get("type") == "FormalParametersContext":
+                            params = child.get("text", "")
+                            break
+
+                    # Extract return type
+                    return_type = ""
+                    for child in node.get("children", []):
+                        if child.get("type") == "TypeRefContext":
+                            return_type = child.get("text", "")
+                            break
+
+                    is_test = any(
+                        m.lower() in ("@istest", "testmethod")
+                        for m in modifiers_list
+                    )
+
+                    nodes.append(NodeInfo(
+                        kind="Function",
+                        name=method_name,
+                        file_path=file_path_str,
+                        line_start=start_line,
+                        line_end=end_line,
+                        language="apex",
+                        parent_name=current_class,
+                        params=params,
+                        return_type=return_type,
+                        modifiers=",".join(modifiers_list) if modifiers_list else None,
+                        is_test=is_test,
+                    ))
+
+                    if current_class:
+                        container = self._qualify(
+                            current_class, file_path_str, None,
+                        )
+                        edges.append(EdgeInfo(
+                            kind="CONTAINS",
+                            source=container,
+                            target=qualified,
+                            file_path=file_path_str,
+                            line=start_line,
+                        ))
+
+                    # Recurse into method body
+                    for child in node.get("children", []):
+                        walk(child, node)
+
+                    current_method = prev_method
+                    return  # Skip default recursion
+
+            # -------- CONSTRUCTOR --------
+            if node_type == "ConstructorDeclarationContext":
+                ctor_name = self._extract_apex_identifier(node) or current_class or "constructor"
+                if ctor_name:
+                    qualified = self._qualify(
+                        ctor_name, file_path_str, current_class,
+                    )
+                    prev_method = current_method
+                    current_method = qualified
+
+                    nodes.append(NodeInfo(
+                        kind="Function",
+                        name=ctor_name,
+                        file_path=file_path_str,
+                        line_start=start_line,
+                        line_end=end_line,
+                        language="apex",
+                        parent_name=current_class,
+                        extra={"apex_kind": "constructor"},
+                    ))
+
+                    if current_class:
+                        container = self._qualify(
+                            current_class, file_path_str, None,
+                        )
+                        edges.append(EdgeInfo(
+                            kind="CONTAINS",
+                            source=container,
+                            target=qualified,
+                            file_path=file_path_str,
+                            line=start_line,
+                        ))
+
+                    for child in node.get("children", []):
+                        walk(child, node)
+
+                    current_method = prev_method
+                    return
+
+            # -------- METHOD CALL (DotMethodCallContext) --------
+            if node_type == "DotMethodCallContext":
+                # The method name is in AnyIdContext child
+                called = ""
+                for child in node.get("children", []):
+                    if child.get("type") == "AnyIdContext":
+                        called = child.get("text", "")
+                        break
+                if called and current_method:
+                    edges.append(EdgeInfo(
+                        kind="CALLS",
+                        source=current_method,
+                        # Use a sentinel prefix so we can resolve post-walk
+                        target=f"__apex_bare__{called}",
+                        file_path=file_path_str,
+                        line=start_line,
+                        extra={"called_name": called},
+                    ))
+
+            # -------- SOQL QUERY --------
+            if node_type == "QueryContext":
+                # Extract the FROM sObject name and build query preview
+                sobject = self._extract_soql_from_object(node)
+                query_text = node.get("text", "")
+                query_preview = query_text[:300]
+
+                # Create a unique SOQL node
+                soql_counter[0] += 1
+                soql_idx = soql_counter[0]
+                soql_name = f"SOQL:{sobject or 'Query'}#{soql_idx}"
+                soql_qualified = self._qualify(
+                    soql_name, file_path_str, current_class,
+                )
+
+                nodes.append(NodeInfo(
+                    kind="SoqlQuery",
+                    name=soql_name,
+                    file_path=file_path_str,
+                    line_start=start_line,
+                    line_end=end_line,
+                    language="apex",
+                    parent_name=current_class,
+                    extra={
+                        "sobject": sobject or "",
+                        "query_preview": query_preview,
+                    },
+                ))
+
+                if current_method:
+                    edges.append(EdgeInfo(
+                        kind="CALLS",
+                        source=current_method,
+                        target=soql_qualified,
+                        file_path=file_path_str,
+                        line=start_line,
+                        extra={
+                            "call_type": "soql",
+                            "sobject": sobject or "",
+                            "query_preview": query_preview,
+                        },
+                    ))
+                return  # Don't recurse into SOQL sub-nodes
+
+            # -------- DEFAULT RECURSION --------
+            for child in node.get("children", []):
+                walk(child, node)
+
+        walk(ast)
+
+        # -------- POST-WALK: build method index for CALLS resolution --------
+        # Map bare method name → qualified_name for all methods parsed in this file
+        for n in nodes:
+            if n.kind == "Function":
+                method_index[n.name] = self._qualify(
+                    n.name, n.file_path, n.parent_name
+                )
+            elif n.kind in ("Class", "SoqlQuery"):
+                method_index[n.name] = self._qualify(
+                    n.name, n.file_path, n.parent_name
+                )
+
+        # -------- POST-WALK: resolve bare CALLS targets --------
+        resolved_edges: list[EdgeInfo] = []
+        for edge in edges:
+            if edge.target.startswith("__apex_bare__"):
+                bare = edge.target[len("__apex_bare__"):]
+                resolved_target = method_index.get(bare, bare)
+                resolved_edges.append(EdgeInfo(
+                    kind=edge.kind,
+                    source=edge.source,
+                    target=resolved_target,
+                    file_path=edge.file_path,
+                    line=edge.line,
+                    extra=dict(edge.extra or {}, called_name=bare),
+                ))
+            else:
+                resolved_edges.append(edge)
+        edges = resolved_edges
+
+        test_qnames = {self._qualify(n.name, n.file_path, n.parent_name)
+                       for n in nodes if n.is_test}
+        if test_qnames:
+            for edge in list(edges):
+                if edge.kind == "CALLS" and edge.source in test_qnames:
+                    edges.append(EdgeInfo(
+                        kind="TESTED_BY",
+                        source=edge.target,
+                        target=edge.source,
+                        file_path=edge.file_path,
+                        line=edge.line,
+                    ))
+
+        return nodes, edges
+
+    @staticmethod
+    def _extract_soql_from_object(query_node: dict) -> str:
+        """Extract the FROM sObject name from a QueryContext ANTLR node."""
+        # Walk children to find FromNameListContext -> FieldNameContext
+        def _find_from(n):
+            t = n.get("type", "")
+            if "FromNameList" in t:
+                # The sObject name is typically the first text child
+                for c in n.get("children", []):
+                    ct = c.get("type", "")
+                    if "FieldName" in ct or "SoqlId" in ct or ct == "IdContext":
+                        return c.get("text", "")
+                return n.get("text", "")
+            for c in n.get("children", []):
+                result = _find_from(c)
+                if result:
+                    return result
+            return ""
+        return _find_from(query_node)
 
     def parse_bytes(self, path: Path, source: bytes) -> tuple[list[NodeInfo], list[EdgeInfo]]:
         """Parse pre-read bytes and return extracted nodes and edges.
@@ -329,6 +743,10 @@ class CodeParser:
         language = self.detect_language(path)
         if not language:
             return [], []
+
+        # Apex: delegate to ANTLR-based Node.js parser
+        if language == "apex":
+            return self._parse_apex(str(path), source)
 
         # Vue SFCs: parse with vue parser, then delegate script blocks to JS/TS
         if language == "vue":

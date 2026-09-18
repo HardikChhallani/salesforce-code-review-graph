@@ -178,3 +178,50 @@ class TestGraphStore:
         self.store.set_metadata("test_key", "test_value")
         assert self.store.get_metadata("test_key") == "test_value"
         assert self.store.get_metadata("nonexistent") is None
+
+    def test_token_usage_starts_empty(self):
+        usage = self.store.get_token_usage()
+        assert usage["totals"]["code_review_graph"]["total_tokens"] == 0
+        assert usage["totals"]["non_code_review_graph"]["total_tokens"] == 0
+        assert usage["tools"] == {}
+
+    def test_record_token_usage_updates_totals_and_tools(self):
+        self.store.record_token_usage(
+            tool_name="detect_changes",
+            category="code_review_graph",
+            input_tokens=12,
+            output_tokens=34,
+        )
+        self.store.record_token_usage(
+            tool_name="query_graph",
+            category="non_code_review_graph",
+            input_tokens=5,
+            output_tokens=7,
+        )
+        usage = self.store.get_token_usage()
+
+        review = usage["totals"]["code_review_graph"]
+        assert review["calls"] == 1
+        assert review["input_tokens"] == 12
+        assert review["output_tokens"] == 34
+        assert review["total_tokens"] == 46
+
+        non_review = usage["totals"]["non_code_review_graph"]
+        assert non_review["calls"] == 1
+        assert non_review["total_tokens"] == 12
+
+        tool = usage["tools"]["detect_changes"]
+        assert tool["category"] == "code_review_graph"
+        assert tool["total_tokens"] == 46
+
+    def test_reset_token_usage(self):
+        self.store.record_token_usage(
+            tool_name="detect_changes",
+            category="code_review_graph",
+            input_tokens=1,
+            output_tokens=1,
+        )
+        reset = self.store.reset_token_usage()
+        assert reset["totals"]["code_review_graph"]["total_tokens"] == 0
+        assert reset["totals"]["non_code_review_graph"]["total_tokens"] == 0
+        assert reset["tools"] == {}
